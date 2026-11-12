@@ -1,0 +1,73 @@
+{
+  "manifestVersion": 2,
+  "id": "taskfile-runner",
+  "name": "Taskfile Runner",
+  "version": "0.1.2",
+  "description": "Панель со списком задач из Taskfile.yml фокусного воркспейса: клик по задаче запускает task в терминале-вкладке воркспейса, статусы, остановка и перезапуск — в панели и в виде Taskfile Runner.",
+  "author": {
+    "name": "dimti",
+    "url": "https://github.com/dimti"
+  },
+  "repository": "https://github.com/dimti/orca-plugin-taskfile",
+  "homepage": "https://github.com/dimti/orca-plugin-taskfile",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "taskfile-runner",
+        "title": "Taskfile",
+        "icon": "play",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "customEditors": [
+      {
+        "id": "taskfile-tasks",
+        "title": "Taskfile Runner",
+        "filenames": ["Taskfile.yml", "Taskfile.yaml"],
+        "entry": "src/editor/tasks.ts",
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "id": "taskfile.openPanel",
+        "title": "Taskfile: показать оснастку",
+        "when": "workspace"
+      },
+      {
+        "id": "taskfile.openTasks",
+        "title": "Taskfile: задачи в редакторе",
+        "when": "workspace"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "taskfile.openPanel",
+        "key": "Mod+Shift+P",
+        "when": "workspace"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "terminal:send"
+    },
+    {
+      "kind": "terminal:read"
+    },
+    {
+      "kind": "workspace:write"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+version: '3'
+
+tasks:
+  build:
+    desc: Собрать проект
+    cmds:
+      - echo building
+
+  test:
+    desc: Прогнать тесты
+    cmds:
+      - echo testing
+
+  db:migrate:
+    desc: Накатить миграции
+    cmds:
+      - echo migrating
