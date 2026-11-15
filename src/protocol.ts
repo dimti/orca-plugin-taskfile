@@ -25,6 +25,9 @@ declare module 'orca' {
     'taskfile.stop': { input: { task: string }; output: { ok: true } }
     /** Brings the task's terminal tab to the front, through the Orca CLI. */
     'taskfile.focus': { input: { task: string }; output: { focused: boolean; reason?: string } }
+    /** Closes the task's terminal tab through the Orca CLI and forgets the run; a terminal that
+     *  is already gone still counts as closed. */
+    'taskfile.close': { input: { task: string }; output: { closed: boolean; reason?: string } }
     /** Shows the plugin's panel in the right sidebar; the tasks view calls it on open. */
     'taskfile.showPanel': { output: { shown: boolean; reason?: string } }
     /** Makes sure the workspace's Taskfile is open in an editor tab (no duplicates, no focus). */
@@ -38,5 +41,8 @@ declare module 'orca' {
       startedAt: number
       status: 'running' | 'ok' | 'failed' | 'stopped' | 'gone' | 'timeout'
     }
+    /** The task's run is gone for good (terminal closed, by hand or from the panel): its card
+     *  leaves the run list. */
+    'taskfile.closed': { task: string }
   }
 }

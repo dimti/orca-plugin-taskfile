@@ -222,6 +222,60 @@ test('reports the run as gone when its terminal cannot be read', async () => {
   })
   await worker.request('taskfile.run', { task: 'build' })
   await untilStatus(worker, 'gone')
+  // A terminal closed on its own drops the run's card from the panel too.
+  const closed = worker.posts.filter((post) => post.event === 'taskfile.closed')
+  assert.deepEqual(closed.map((post) => post.payload), [{ task: 'build' }])
+  await worker.deactivate()
+})
+
+test('closes the run terminal through the CLI and forgets the run', async () => {
+  const calls: string[][] = []
+  main.setCliRunnerForTests(async (args) => {
+    calls.push(args)
+    return { ok: true, out: '' }
+  })
+  const worker = await mountWorker(main, { host: mockHost({ results: hostResults({ lines: [], truncated: false }) }) })
+  await worker.request('taskfile.run', { task: 'build' })
+  const result = await worker.request('taskfile.close', { task: 'build' })
+  assert.deepEqual(result, { closed: true })
+  // The run itself brought the tab forward, then the close asks for the whole tab.
+  assert.deepEqual(calls, [
+    ['terminal', 'switch', '--terminal', 'term-1', '--json'],
+    ['terminal', 'close', '--terminal', 'term-1', '--tab', '--json']
+  ])
+  // The panel hears the run is gone, and a second close finds no run.
+  const closed = worker.posts.filter((post) => post.event === 'taskfile.closed')
+  assert.deepEqual(closed.map((post) => post.payload), [{ task: 'build' }])
+  await assert.rejects(() => worker.request('taskfile.close', { task: 'build' }))
+  await worker.deactivate()
+})
+
+test('falls back to typing exit when the CLI cannot close the terminal', async () => {
+  main.setCliRunnerForTests(async () => ({ ok: false, out: '' }))
+  const worker = await mountWorker(main, { host: mockHost({ results: hostResults({ lines: [], truncated: false }) }) })
+  await worker.request('taskfile.run', { task: 'build' })
+  const result = await worker.request('taskfile.close', { task: 'build' })
+  assert.deepEqual(result, { closed: true })
+  const typed = worker.host.callsOf('terminal.sendText') as { terminalId: string; text: string; enter?: boolean }[]
+  assert.deepEqual(typed, [{ terminalId: 'term-1', text: 'exit', enter: true }])
+  await worker.deactivate()
+})
+
+test('counts an already-gone terminal as closed', async () => {
+  main.setCliRunnerForTests(async () => ({ ok: false, out: '' }))
+  const worker = await mountWorker(main, {
+    host: mockHost({
+      results: {
+        ...hostResults({ lines: [], truncated: false }),
+        'terminal.sendText': () => {
+          throw hostError('unavailable', 'терминал закрыт')
+        }
+      }
+    })
+  })
+  await worker.request('taskfile.run', { task: 'build' })
+  const result = await worker.request('taskfile.close', { task: 'build' })
+  assert.deepEqual(result, { closed: true })
   await worker.deactivate()
 })
 

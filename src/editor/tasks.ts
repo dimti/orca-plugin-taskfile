@@ -254,6 +254,11 @@ async function start(root: HTMLElement): Promise<void> {
     states.set(progress.task, progress.status)
     draw()
   })
+  // The run's terminal closed: its status line goes away with the run card.
+  frame.plugin.on('taskfile.closed', ({ task }) => {
+    states.delete(task)
+    draw()
+  })
   // The run board lives in the panel: show it beside the tasks view as the view opens.
   void frame.plugin.request('taskfile.showPanel').catch(() => {
     // Best effort: the view works fine without the sidebar.

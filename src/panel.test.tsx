@@ -210,6 +210,39 @@ test('offers stop while a run is going and restart after it ends', async () => {
   await view.unmount()
 })
 
+test('closes a run card: its terminal closes and the card leaves the list', async () => {
+  const closed: string[] = []
+  const host = mockHost({
+    requests: {
+      'taskfile.list': listAnswer,
+      'taskfile.run': () => ({ terminalId: 'term-1' }),
+      'taskfile.close': ({ task }) => {
+        closed.push(task)
+        return { closed: true }
+      }
+    }
+  })
+  const view = await mount(panel, { host })
+  await view.press({ label: 'ssh' })
+  await view.post('taskfile.status', {
+    task: 'env:ssh',
+    terminalId: 'term-1',
+    startedAt: Date.now(),
+    status: 'ok'
+  })
+  assert.equal(view.find({ text: /task env:ssh/ }) !== null, true)
+
+  await view.press({ type: 'Button', text: 'Закрыть' })
+  assert.deepEqual(closed, ['env:ssh'])
+  // The worker answers the close by dropping the card.
+  await view.post('taskfile.closed', { task: 'env:ssh' })
+  assert.equal(view.find({ text: /task env:ssh/ }), null)
+  assert.equal(view.find({ text: /Запуски/ }), null)
+  assert.deepEqual(view.errors, [])
+  assert.deepEqual(view.refusals, [])
+  await view.unmount()
+})
+
 test('keeps the list and the error when only workspace terminals churn', async () => {
   let lists = 0
   const host = mockHost({

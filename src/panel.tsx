@@ -116,6 +116,19 @@ async function focusTerminal(task: string): Promise<void> {
   }
 }
 
+/** Closes the run's terminal tab; the worker then drops the card from «Запуски». */
+async function closeRun(task: string): Promise<void> {
+  if (read(busyTask) !== null) return
+  set(busyTask, task)
+  try {
+    await plugin.request('taskfile.close', { task })
+  } catch (failure) {
+    set(error, message(failure))
+  } finally {
+    set(busyTask, null)
+  }
+}
+
 /** Opens (or reveals) the workspace's Taskfile.yml tab in the editor. */
 async function openFile(): Promise<void> {
   try {
@@ -146,6 +159,10 @@ export function setup(ctx: PanelContext): void {
         ]
         return next.slice(0, STATES_KEPT)
       })
+    }),
+    // The run's terminal closed (from the card's button or on its own): its card goes away.
+    plugin.on('taskfile.closed', ({ task }) => {
+      update(states, (list) => list.filter((entry) => entry.task !== task))
     })
   )
   // No auto-open of the file: even an already open tab would steal focus every time. The
@@ -340,6 +357,15 @@ export default function Panel() {
                       Запустить снова
                     </Button>
                   )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon="close"
+                    disabled={active !== null}
+                    onPress={() => void closeRun(entry.task)}
+                  >
+                    Закрыть
+                  </Button>
                 </Row>
               </Stack>
             </Card>

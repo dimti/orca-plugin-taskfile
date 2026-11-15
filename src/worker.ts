@@ -54,14 +54,15 @@ let runCounter = 0
 
 const runKey = (workspaceId: string, task: string): string => `${workspaceId}\u0000${task}`
 
-function findRun(workspaceId: string | null, task: string): TaskRun | null {
+function findRunEntry(workspaceId: string | null, task: string): [string, TaskRun] | null {
   if (workspaceId) {
-    const exact = taskRuns.get(runKey(workspaceId, task))
-    if (exact) return exact
+    const key = runKey(workspaceId, task)
+    const exact = taskRuns.get(key)
+    if (exact) return [key, exact]
   }
   // The workspace may have lost focus since the run; the task name still finds it.
-  for (const run of taskRuns.values()) {
-    if (run.task === task) return run
+  for (const [key, run] of taskRuns) {
+    if (run.task === task) return [key, run]
   }
   return null
 }
@@ -228,6 +229,9 @@ async function streamRun(orca: OrcaWorkerApi, key: string, runId: number): Promi
     } catch (error) {
       run.status = 'gone'
       post(orca, run)
+      // The terminal is gone (closed by hand or with the tab): the run's card leaves the panel.
+      taskRuns.delete(key)
+      orca.panels.post('taskfile.closed', { task: run.task })
       orca.log(`Вывод ${run.task}: терминал недоступен (${message(error)})`)
       return
     }
@@ -361,10 +365,11 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('taskfile.stop', async ({ task }) => {
     const workspace = await focusedWorkspace(orca)
-    const run = findRun(workspace?.id ?? null, task)
-    if (!run) {
+    const found = findRunEntry(workspace?.id ?? null, task)
+    if (!found) {
       throw Object.assign(new Error(`Задача ${task} не запущена`), { code: 'unavailable' })
     }
+    const run = found[1]
     run.stopSent = true
     // Ctrl+C to the task's foreground process group, then a marker that only lands once the
     // shell is free again — so a task that ignores SIGINT stays "running" honestly.
@@ -380,20 +385,43 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   orca.panels.handle('taskfile.focus', async ({ task }) => {
     const workspace = await focusedWorkspace(orca)
-    const run = findRun(workspace?.id ?? null, task)
-    if (!run) {
+    const found = findRunEntry(workspace?.id ?? null, task)
+    if (!found) {
       throw Object.assign(new Error(`Задача ${task} не запущена`), { code: 'unavailable' })
     }
     const result = await runOrcaCli([
       'terminal',
       'switch',
       '--terminal',
-      run.terminalId,
+      found[1].terminalId,
       '--json'
     ])
     return result.ok
       ? { focused: true }
       : { focused: false, reason: 'Orca CLI недоступен (orca-ide не найден)' }
+  })
+
+  orca.panels.handle('taskfile.close', async ({ task }) => {
+    const workspace = await focusedWorkspace(orca)
+    const found = findRunEntry(workspace?.id ?? null, task)
+    if (!found) {
+      throw Object.assign(new Error(`Задача ${task} не запущена`), { code: 'unavailable' })
+    }
+    const [key, run] = found
+    // The tab goes away through the CLI; a terminal that is already closed is no error.
+    const closed = await runOrcaCli(['terminal', 'close', '--terminal', run.terminalId, '--tab', '--json'])
+    if (!closed.ok) {
+      // No CLI: type `exit` into the terminal — closing the shell closes the pane.
+      try {
+        await orca.host.call('terminal.sendText', { terminalId: run.terminalId, text: 'exit', enter: true })
+      } catch {
+        // The terminal is already gone: that is a close too.
+      }
+    }
+    taskRuns.delete(key)
+    orca.panels.post('taskfile.closed', { task })
+    orca.log(`Закрыт терминал задачи ${task} (${run.terminalId})`)
+    return { closed: true }
   })
 
   // Ctrl+Shift+P (and the palette): shows the plugin's panel in the right sidebar.
