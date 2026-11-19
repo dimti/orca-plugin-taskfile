@@ -7,9 +7,10 @@ export type RunStatus = 'running' | 'ok' | 'failed' | 'stopped' | 'gone' | 'time
 declare module 'orca' {
   interface PluginRequests {
     /** Tasks of the focused workspace's Taskfile.yml, run through `task --list-all --json`.
-     * `binaries` overrides which go-task binaries to try (for tests); the panel never sends it. */
+     * `binaries` overrides which go-task binaries to try (for tests); the panel never sends it.
+     * `force` bypasses the mtime cache so the panel's Refresh button always re-reads. */
     'taskfile.list': {
-      input?: { binaries?: string[] }
+      input?: { binaries?: string[]; force?: boolean }
       output: {
         workspaceName: string | null
         /** The name `workspace.readContext` and `workspace.changed` use for the workspace. */

@@ -60,11 +60,11 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function refresh(): Promise<void> {
+async function refresh(force = false): Promise<void> {
   set(loading, true)
   set(error, null)
   try {
-    const answer = await plugin.request('taskfile.list')
+    const answer = await plugin.request('taskfile.list', { force })
     set(tasks, answer.tasks)
     set(workspaceName, answer.workspaceName)
     set(displayName, answer.displayName)
@@ -144,7 +144,7 @@ export function setup(ctx: PanelContext): void {
     on('workspace.changed', ({ context }) => {
       const name = context ? context.displayName : null
       // Terminals opening and closing also fire; refresh only when the workspace moved.
-      if (name !== read(displayName) || read(tasks) === null) void refresh()
+      if (name !== read(displayName) || read(tasks) === null) void refresh(true)
     }),
     plugin.on('taskfile.status', (progress) => {
       update(states, (list) => {
@@ -284,7 +284,7 @@ export default function Panel() {
             label="Показать Taskfile.yml"
             onPress={() => void openFile()}
           />
-          <IconButton icon="refresh" label="Обновить" disabled={busy} onPress={refresh} />
+          <IconButton icon="refresh" label="Обновить" disabled={busy} onPress={() => void refresh(true)} />
         </Row>
       </Row>
       {(all === null || all.length > 0) && (

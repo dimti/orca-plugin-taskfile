@@ -1,7 +1,7 @@
 // Runs src/worker.ts's activate(orca) with the orca object Orca passes, over a mock host.
 // The mock host answers the workspace calls; `task --list-all` runs for real against fixtures/.
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -85,6 +85,67 @@ test('lists the fixture workspace tasks', async () => {
   await worker.deactivate()
 })
 
+test('serves a second list from the cache when the Taskfile has not changed', async () => {
+  const worker = await mountWorker(main, { host })
+  const first = await worker.request('taskfile.list')
+  // Mutate the cached task list in place: a second call that hits the cache returns the
+  // same array reference; a call that bypasses the cache rebuilds it from go-task.
+  assert.ok(first.tasks, 'первый list вернул задачи')
+  const cachedTasks = first.tasks
+  const second = await worker.request('taskfile.list')
+  assert.equal(second.tasks, cachedTasks, 'повторный list без force отдаёт кеш (тот же массив)')
+  const forced = await worker.request('taskfile.list', { force: true })
+  assert.notEqual(forced.tasks, cachedTasks, 'list с force обходит кеш и пересобирает список')
+  assert.deepEqual(
+    forced.tasks.map((task) => task.name),
+    ['build', 'test', 'db:migrate'],
+    'принудительный список совпадает с go-task'
+  )
+  assert.deepEqual(worker.refusals, [])
+  await worker.deactivate()
+})
+
+test("picks the focused workspace by id when two workspaces share a displayName", async () => {
+  // Regression: intai and nixos-configs both showed displayName "master", and the
+  // name+branch match picked whichever came first in workspace.list — so the bar's
+  // Taskfile panel served the wrong project's tasks. The context's workspaceId is
+  // unique, so it decides; name+branch stays the pre-1.7 fallback.
+  const dir = mkdtempSync(path.join(tmpdir(), 'taskfile-twins-'))
+  writeFileSync(path.join(dir, 'Taskfile.yml'), "version: '3'\ntasks:\n  mine:\n    desc: соседний близнец\n")
+  const twinHost = mockHost({
+    results: {
+      'workspace.readContext': {
+        workspaceId: 'identity:wt2:local:twin-b',
+        branch: 'main',
+        displayName: 'master',
+        terminals: []
+      },
+      'workspace.list': {
+        workspaces: [
+          { id: 'identity:wt2:local:twin-a', kind: 'worktree', name: 'master', path: path.join(dir, 'a'), branch: 'main', hostId: null },
+          { id: 'identity:wt2:local:twin-b', kind: 'worktree', name: 'master', path: dir, branch: 'main', hostId: null }
+        ],
+        truncated: false
+      },
+      'terminal.create': { terminalId: 'term-1' },
+      'terminal.read': { lines: [], truncated: false },
+      'terminal.sendText': { accepted: true },
+      'editor.open': { opened: true }
+    }
+  })
+  const worker = await mountWorker(main, { host: twinHost })
+  const listed = await worker.request('taskfile.list')
+  assert.equal(listed.displayName, 'master')
+  assert.equal(listed.workspaceName, dir)
+  assert.deepEqual(
+    listed.tasks.map((task) => task.name),
+    ['mine'],
+    'выбран близнец с точным workspaceId, а не первый с тем же displayName'
+  )
+  await worker.deactivate()
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('runs a task in a fresh terminal with its own run marks', async () => {
   const worker = await mountWorker(main, { host })
   const started = await worker.request('taskfile.run', { task: 'build' })
@@ -149,6 +210,36 @@ test('restarts the task in the same terminal once the run answers', async () => 
   assert.match(typed[0].text, /^(go-)?task build && echo __taskfile_runner_ok_[a-z0-9]+__/)
   // The restart carries fresh marks, so the old answer cannot end the new run.
   assert.notEqual(marksOf(typed[0].text).ok, marks.ok)
+  await worker.deactivate()
+})
+
+test('a run whose terminal died gets a fresh tab instead of a failed sendText', async () => {
+  // The first run's tab was closed, killing the pty: `terminal.read` answers ok
+  // with an empty tail (Orca keeps the buffer), but `terminal.sendText` is
+  // refused with terminal_not_writable. The restart must fall back to a new tab.
+  const results = hostResults({ lines: [], truncated: false })
+  const worker = await mountWorker(main, {
+    host: mockHost({
+      results: {
+        ...results,
+        'terminal.sendText': () => {
+          throw hostError('action_failed', 'terminal_not_writable')
+        }
+      }
+    })
+  })
+  const first = await worker.request('taskfile.run', { task: 'build' })
+  assert.equal(first.terminalId, 'term-1')
+  const second = await worker.request('taskfile.run', { task: 'build' })
+  // The dead run left a readable terminal, so the restart tried it first…
+  assert.equal(worker.host.callsOf('terminal.sendText').length, 1)
+  // …and the refusal landed the command in a fresh terminal instead.
+  const created = worker.host.callsOf('terminal.create') as { workspaceId: string; title: string; command: string }[]
+  assert.equal(created.length, 2)
+  assert.match(
+    created[1].command,
+    /^(go-)?task build && echo __taskfile_runner_ok_[a-z0-9]+__ \|\| echo __taskfile_runner_fail_[a-z0-9]+__$/
+  )
   await worker.deactivate()
 })
 

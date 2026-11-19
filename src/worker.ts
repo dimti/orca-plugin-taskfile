@@ -1,7 +1,7 @@
 // The plugin's own worker. Orca starts it on the panel's first plugin.request and transpiles
 // this file when it loads: no build step.
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
 import type { OrcaWorkerApi } from 'orca/worker'
@@ -26,6 +26,18 @@ const TASKFILES = ['Taskfile.yml', 'Taskfile.yaml', 'Taskfile.dist.yml']
 /** How often the run's terminal is read, and how long the watch lasts. */
 const POLL_MS = 1_000
 const RUN_TIMEOUT_MS = 15 * 60_000
+
+/** A cached task list, keyed by workspace path. Invalidation is by Taskfile mtime:
+ *  switching panels (Ctrl+Shift+P) mounts the panel again and would otherwise re-spawn
+ *  `go-task --list-all --json` every time — a process spawn plus a YAML parse is the lag
+ *  the user feels. The Refresh button sends `force: true` to bypass this. */
+type TaskCache = { mtimeMs: number; tasks: { name: string; description: string }[] }
+const taskCache = new Map<string, TaskCache>()
+
+/** The Taskfile that go-task will parse for `cwd`; the same order the editor view tries. */
+function findTaskfile(cwd: string): string | null {
+  return TASKFILES.map((name) => path.join(cwd, name)).find((candidate) => existsSync(candidate)) ?? null
+}
 
 /** The binary that answered last: the machine-wide choice, kept between panel calls. */
 let taskBinary: string | null = null
@@ -105,7 +117,10 @@ async function showPanel(): Promise<{ shown: boolean; reason?: string }> {
   return result.ok ? { shown: true } : { shown: false, reason: 'Orca CLI недоступен' }
 }
 
-/** The focused workspace, resolved by matching readContext against workspace.list. */
+/** The focused workspace, resolved by matching readContext against workspace.list.
+ *  The context's `workspaceId` is unique, so it decides; name+branch matched the
+ *  first of two workspaces that share a displayName (intai and nixos-configs both
+ *  show "master"), and stays only as the pre-1.7 fallback. */
 async function focusedWorkspace(
   orca: Omit<OrcaWorkerApi, 'panels'> | OrcaWorkerApi
 ): Promise<{ id: string; path: string; displayName: string } | null> {
@@ -113,6 +128,10 @@ async function focusedWorkspace(
   const context = await orca.host.call('workspace.readContext')
   if (!context) return null
   const listed = await orca.host.call('workspace.list')
+  if ('workspaceId' in context && context.workspaceId) {
+    const byId = listed.workspaces.find((workspace) => workspace.id === context.workspaceId)
+    if (byId) return { id: byId.id, path: byId.path, displayName: byId.name }
+  }
   const byName = listed.workspaces.filter((workspace) => workspace.name === context.displayName)
   if (byName.length === 0) return null
   const withBranch = byName.find(
@@ -285,7 +304,32 @@ export default function activate(orca: OrcaWorkerApi): void {
           error: 'Нет открытого воркспейса в Orca'
         }
       }
+      const force = input?.force === true || Boolean(input?.binaries)
+      const file = findTaskfile(workspace.path)
+      if (!force && file) {
+        try {
+          const mtimeMs = statSync(file).mtimeMs
+          const cached = taskCache.get(workspace.path)
+          if (cached && cached.mtimeMs === mtimeMs) {
+            return {
+              workspaceName: workspace.path,
+              displayName: workspace.displayName,
+              tasks: cached.tasks,
+              error: null
+            }
+          }
+        } catch {
+          // stat failed: fall through to a live list instead of guessing.
+        }
+      }
       const { tasks } = await detectAndList(listCandidates(input?.binaries), workspace.path)
+      if (file) {
+        try {
+          taskCache.set(workspace.path, { mtimeMs: statSync(file).mtimeMs, tasks })
+        } catch {
+          // The file vanished between list and stat: nothing to cache, the list still returns.
+        }
+      }
       return {
         workspaceName: workspace.path,
         displayName: workspace.displayName,
@@ -318,21 +362,25 @@ export default function activate(orca: OrcaWorkerApi): void {
     const marks = newRunMarks()
     const command = runCommand(binary, task, marks)
 
-    // A restart runs in the task's own terminal tab again; a closed terminal leaves no
-    // handle to type into, so that run gets a fresh tab.
+    // A restart runs in the task's own terminal tab again. `terminal.read` answers
+    // ok even for a terminal whose pty died with its closed tab (Orca keeps the
+    // buffer), so only typing tells a reusable tab from a dead one: a refused
+    // sendText means the command reached no shell, and that run gets a fresh tab.
     const previous = taskRuns.get(runKey(workspace.id, task))
     let terminalId: string | null = null
     if (previous) {
       try {
-        await orca.host.call('terminal.read', { terminalId: previous.terminalId, maxLines: 1 })
+        await orca.host.call('terminal.sendText', {
+          terminalId: previous.terminalId,
+          text: command,
+          enter: true
+        })
         terminalId = previous.terminalId
       } catch {
         terminalId = null
       }
     }
-    if (terminalId) {
-      await orca.host.call('terminal.sendText', { terminalId, text: command, enter: true })
-    } else {
+    if (!terminalId) {
       const created = await orca.host.call('terminal.create', {
         workspaceId: workspace.id,
         title: `task ${task}`,
