@@ -2,6 +2,7 @@
 // this file when it loads: no build step.
 import { execFile } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
 import type { OrcaWorkerApi } from 'orca/worker'
@@ -91,9 +92,16 @@ export function setCliRunnerForTests(runner: CliRunner | null): void {
 
 async function runOrcaCli(args: string[]): Promise<{ ok: boolean; out: string }> {
   if (cliRunner) return cliRunner(args)
-  const candidates = [process.env.ORCA_CLI_COMMAND, '/usr/bin/orca-ide', 'orca-ide'].filter(
-    (candidate): candidate is string => Boolean(candidate)
-  )
+  // Package layouts move: try every known home of the CLI, PATH last. Never the bare
+  // `orca` name: outside Orca it is the GNOME screen reader.
+  const candidates = [
+    process.env.ORCA_CLI_COMMAND,
+    '/opt/stably-orca/resources/bin/orca-ide',
+    path.join(homedir(), '.local', 'bin', 'orca-ide'),
+    path.join(homedir(), '.config', 'orca', 'linux-orca-cli-shim', 'orca'),
+    '/usr/bin/orca-ide',
+    'orca-ide'
+  ].filter((candidate): candidate is string => Boolean(candidate))
   for (const binary of candidates) {
     try {
       const { stdout } = await execFileAsync(binary, args, { timeout: 15_000 })
@@ -206,7 +214,16 @@ function newRunMarks(): RunMarks {
   const ok = `__taskfile_runner_ok_${id}__`
   const fail = `__taskfile_runner_fail_${id}__`
   const stop = `__taskfile_runner_stopped_${id}__`
-  return { ok, fail, stop, wrap: ` && echo ${ok} || echo ${fail}` }
+  return { ok, fail, stop, wrap: ` && ${echoMark(ok)} || ${echoMark(fail)}` }
+}
+
+/** Prints one mark on a fresh line, assembled from two halves: a typed line must never
+ *  contain the whole mark, or the scanner would read the command itself as the answer.
+ *  The fresh line keeps the mark off the tail of a command whose output ended without a
+ *  newline (nixos-rebuild does exactly that). */
+function echoMark(mark: string): string {
+  const cut = Math.floor(mark.length / 2)
+  return `printf '\\n%s%s\\n' '${mark.slice(0, cut)}' '${mark.slice(cut)}'`
 }
 
 /** The line typed into the run's terminal: the task, then the marks its run answers. */
@@ -214,14 +231,15 @@ function runCommand(binary: string, task: string, marks: RunMarks): string {
   return `${binary} ${task}${marks.wrap}`
 }
 
-/** What this run's marks say, or `running` while none has been echoed yet. */
+/** What this run's marks say, or `running` while none has been echoed yet. A mark counts
+ *  anywhere in a line: it may share one with the task's last output when that output ends
+ *  without a trailing newline. The typed command cannot fake an answer — see echoMark. */
 function scanStatus(lines: readonly string[], marks: RunMarks): 'running' | 'ok' | 'failed' | 'stopped' {
   let failed = false
   for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed === marks.ok) return 'ok'
-    if (trimmed === marks.stop) return 'stopped'
-    if (trimmed === marks.fail) failed = true
+    if (line.includes(marks.ok)) return 'ok'
+    if (line.includes(marks.stop)) return 'stopped'
+    if (line.includes(marks.fail)) failed = true
   }
   return failed ? 'failed' : 'running'
 }
@@ -424,7 +442,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     await orca.host.call('terminal.sendText', { terminalId: run.terminalId, text: '\u0003' })
     await orca.host.call('terminal.sendText', {
       terminalId: run.terminalId,
-      text: `echo ${run.marks.stop}`,
+      text: echoMark(run.marks.stop),
       enter: true
     })
     orca.log(`Остановка задачи ${task} (терминал ${run.terminalId})`)

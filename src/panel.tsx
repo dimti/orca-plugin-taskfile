@@ -272,6 +272,16 @@ export default function Panel() {
 
   return (
     <Stack gap="md">
+      {(all === null || all.length > 0) && (
+        <Input
+          label="Фильтр"
+          labelHidden
+          type="search"
+          value={query}
+          placeholder="Поиск по имени или описанию"
+          onChange={(value) => set(filter, value)}
+        />
+      )}
       <Row justify="between" align="center">
         <Row gap="xs" align="center">
           <Heading level={2}>Taskfile</Heading>
@@ -287,16 +297,6 @@ export default function Panel() {
           <IconButton icon="refresh" label="Обновить" disabled={busy} onPress={() => void refresh(true)} />
         </Row>
       </Row>
-      {(all === null || all.length > 0) && (
-        <Input
-          label="Фильтр"
-          labelHidden
-          type="search"
-          value={query}
-          placeholder="Поиск по имени или описанию"
-          onChange={(value) => set(filter, value)}
-        />
-      )}
       {all !== null && all.length > 0 && (
         <Row gap="xs">
           <Button variant="ghost" size="sm" icon="collapse" onPress={() => setAllCollapsed(true)}>
@@ -407,7 +407,8 @@ export default function Panel() {
       )}
       <Text muted size="xs">
         Клик по задаче открывает её терминал вкладкой и запускает там task; перезапуск идёт в
-        тот же терминал, статусы — в «Запусках».
+        тот же терминал, статусы — в «Запусках». Поиск — первое поле: после Ctrl+Shift+P нажми
+        Tab и печатай.
       </Text>
     </Stack>
   )

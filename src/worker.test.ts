@@ -12,12 +12,19 @@ import * as main from './worker'
 const fixtures = fileURLToPath(new URL('../fixtures', import.meta.url))
 const goTaskAvailable = spawnSync('go-task', ['--version']).status === 0
 
-/** A run's marks live in its command; tests read them back from what reached the host. */
+/** A run's marks live in its command as printf halves; tests reassemble what reached the
+ *  host. The halves are the point: a typed line must never hold a whole mark. */
 function marksOf(command: string): { ok: string; fail: string } {
-  const ok = /echo (__taskfile_runner_ok_[a-z0-9]+__) \|\|/.exec(command)
-  const fail = /echo (__taskfile_runner_fail_[a-z0-9]+__)/.exec(command)
-  assert.ok(ok && fail, `команда без меток запуска: ${command}`)
-  return { ok: ok![1], fail: fail![1] }
+  const groups = [...command.matchAll(/printf '\\n%s%s\\n' '([^']+)' '([^']+)'/g)]
+  assert.equal(groups.length, 2, `команда без меток запуска: ${command}`)
+  return { ok: groups[0][1] + groups[0][2], fail: groups[1][1] + groups[1][2] }
+}
+
+/** The stop marker is typed the same way; reassemble it too. */
+function stopMarkOf(text: string): string {
+  const match = /^printf '\\n%s%s\\n' '([^']+)' '([^']+)'$/.exec(text)
+  assert.ok(match, `нет метки остановки: ${text}`)
+  return match![1] + match![2]
 }
 
 function hostResults(read: unknown) {
@@ -159,7 +166,7 @@ test('runs a task in a fresh terminal with its own run marks', async () => {
   assert.equal(created[0].workspaceId, 'ws-1')
   assert.match(
     created[0].command,
-    /^task build && echo __taskfile_runner_ok_[a-z0-9]+__ \|\| echo __taskfile_runner_fail_[a-z0-9]+__$/
+    /^task build && printf '\\n%s%s\\n' '[^']+' '[^']+' \|\| printf '\\n%s%s\\n' '[^']+' '[^']+'$/
   )
   // A first run types nothing anywhere: the terminal is created already running the task.
   assert.equal(host.callsOf('terminal.sendText').length, 0)
@@ -178,7 +185,7 @@ test('falls back to go-task when task is missing (Arch/Manjaro package name)', a
   await worker.request('taskfile.run', { task: 'build' })
   const created = host.callsOf('terminal.create') as { command: string }[]
   // This host is shared: the previous test's `task build` comes first.
-  assert.match(created[created.length - 1].command, /^go-task build && echo /)
+  assert.match(created[created.length - 1].command, /^go-task build && printf /)
   await worker.deactivate()
 })
 
@@ -207,7 +214,7 @@ test('restarts the task in the same terminal once the run answers', async () => 
   const typed = worker.host.callsOf('terminal.sendText') as { text: string; enter?: boolean }[]
   assert.equal(typed.length, 1)
   assert.equal(typed[0].enter, true)
-  assert.match(typed[0].text, /^(go-)?task build && echo __taskfile_runner_ok_[a-z0-9]+__/)
+  assert.match(typed[0].text, /^(go-)?task build && printf /)
   // The restart carries fresh marks, so the old answer cannot end the new run.
   assert.notEqual(marksOf(typed[0].text).ok, marks.ok)
   await worker.deactivate()
@@ -238,7 +245,7 @@ test('a run whose terminal died gets a fresh tab instead of a failed sendText', 
   assert.equal(created.length, 2)
   assert.match(
     created[1].command,
-    /^(go-)?task build && echo __taskfile_runner_ok_[a-z0-9]+__ \|\| echo __taskfile_runner_fail_[a-z0-9]+__$/
+    /^(go-)?task build && printf '\\n%s%s\\n' '[^']+' '[^']+' \|\| printf '\\n%s%s\\n' '[^']+' '[^']+'$/
   )
   await worker.deactivate()
 })
@@ -253,7 +260,7 @@ test('stops a task with an interrupt and its stop mark', async () => {
   // Ctrl+C to the task, then a marker that only lands when the shell is free again.
   assert.equal(typed[0].text, '\u0003')
   assert.equal(typed[0].enter, undefined)
-  assert.match(typed[1].text, /^echo __taskfile_runner_stopped_[a-z0-9]+__$/)
+  assert.match(typed[1].text, /^printf '\\n%s%s\\n' '[^']+' '[^']+'$/)
   assert.equal(typed[1].enter, true)
   assert.deepEqual(worker.refusals, [])
   await worker.deactivate()
@@ -267,9 +274,8 @@ test('reports stopped when the stop mark lands', async () => {
   await worker.request('taskfile.run', { task: 'build' })
   await worker.request('taskfile.stop', { task: 'build' })
   const typed = worker.host.callsOf('terminal.sendText') as { text: string }[]
-  const stop = /^echo (__taskfile_runner_stopped_[a-z0-9]+__)$/.exec(typed[1].text)
-  assert.ok(stop)
-  lines = ['^C', stop![1]]
+  const stop = stopMarkOf(typed[1].text)
+  lines = ['^C', stop]
   await untilStatus(worker, 'stopped')
   assert.equal(lastStatus(worker).task, 'build')
   await worker.deactivate()
@@ -515,4 +521,25 @@ test('says so when the workspace has no Taskfile to show', async () => {
   await assert.rejects(() => worker.command('taskfile.openTasks'))
   await worker.deactivate()
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('reads the mark glued to output, but never the typed command', async () => {
+  let lines: string[] = []
+  const worker = await mountWorker(main, {
+    host: mockHost({ results: hostResults(() => ({ lines, truncated: false })) })
+  })
+  await worker.request('taskfile.run', { task: 'build' })
+  const created = worker.host.callsOf('terminal.create') as { command: string }[]
+  const marks = marksOf(created[0].command)
+
+  // The buffer holds the typed wrapper and nothing else: its marks are halves, so the run  // is still running however long the wrapper sits there.
+  lines = [created[0].command]
+  await new Promise((resolve) => setTimeout(resolve, 1_300))
+  assert.equal(lastStatus(worker).status, 'running')
+
+  // nixos-rebuild ends its last line without a newline: the mark lands glued to its tail.
+  lines = [created[0].command, `Done. The new configuration is${marks.ok}`]
+  await untilStatus(worker, 'ok')
+  assert.equal(lastStatus(worker).status, 'ok')
+  await worker.deactivate()
 })
