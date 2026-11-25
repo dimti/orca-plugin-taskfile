@@ -127,8 +127,8 @@ async function showPanel(): Promise<{ shown: boolean; reason?: string }> {
 
 /** The focused workspace, resolved by matching readContext against workspace.list.
  *  The context's `workspaceId` is unique, so it decides; name+branch matched the
- *  first of two workspaces that share a displayName (intai and nixos-configs both
- *  show "master"), and stays only as the pre-1.7 fallback. */
+ *  first of two workspaces that share a displayName (two branches can both be called
+ *  "master"), and stays only as the pre-1.7 fallback. */
 async function focusedWorkspace(
   orca: Omit<OrcaWorkerApi, 'panels'> | OrcaWorkerApi
 ): Promise<{ id: string; path: string; displayName: string } | null> {

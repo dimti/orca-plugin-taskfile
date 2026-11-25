@@ -113,10 +113,11 @@ test('serves a second list from the cache when the Taskfile has not changed', as
 })
 
 test("picks the focused workspace by id when two workspaces share a displayName", async () => {
-  // Regression: intai and nixos-configs both showed displayName "master", and the
-  // name+branch match picked whichever came first in workspace.list — so the bar's
-  // Taskfile panel served the wrong project's tasks. The context's workspaceId is
-  // unique, so it decides; name+branch stays the pre-1.7 fallback.
+  // Regression: two workspaces of different projects both showed displayName
+  // "master", and the name+branch match picked whichever came first in
+  // workspace.list — so the bar's Taskfile panel served the wrong project's tasks.
+  // The context's workspaceId is unique, so it decides; name+branch stays the
+  // pre-1.7 fallback.
   const dir = mkdtempSync(path.join(tmpdir(), 'taskfile-twins-'))
   writeFileSync(path.join(dir, 'Taskfile.yml'), "version: '3'\ntasks:\n  mine:\n    desc: соседний близнец\n")
   const twinHost = mockHost({
