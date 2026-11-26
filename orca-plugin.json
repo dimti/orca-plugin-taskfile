@@ -3,7 +3,7 @@
   "id": "taskfile-runner",
   "publisher": "dimti",
   "name": "Taskfile Runner",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Панель со списком задач из Taskfile.yml фокусного воркспейса: клик по задаче запускает task в терминале-вкладке воркспейса, статусы, остановка и перезапуск — в панели и в виде Taskfile Runner.",
   "author": {
     "name": "dimti",

@@ -1,10 +1,11 @@
 // The plugin's own worker. Orca starts it on the panel's first plugin.request and transpiles
 // this file when it loads: no build step.
 import { execFile } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
 import type { RunStatus } from './protocol'
 import './protocol'
@@ -15,8 +16,15 @@ const execFileAsync = promisify(execFile)
 /** go-task ships as `task` and as `go-task` (Arch/Manjaro package name); tried in this order. */
 const TASK_BINARIES = ['task', 'go-task']
 
-/** How Orca knows this plugin when `plugin open` names it: `local.` for a development folder. */
-const PLUGIN_KEY = 'local.taskfile-runner'
+/** How Orca knows this plugin when `plugin open` names it: `<publisher>.<id>` from our own
+ *  manifest (`local.<id>` before a publisher is set), so renaming the publisher cannot
+ *  silently break the Ctrl+Shift+P command again. */
+const PLUGIN_KEY = (() => {
+  const manifest = JSON.parse(
+    readFileSync(fileURLToPath(new URL('../orca-plugin.json', import.meta.url)), 'utf8')
+  ) as { publisher?: string; id: string }
+  return manifest.publisher ? `${manifest.publisher}.${manifest.id}` : `local.${manifest.id}`
+})()
 
 /** The panel `plugin open --panel` shows in the right sidebar. */
 const PANEL_ID = 'taskfile-runner'

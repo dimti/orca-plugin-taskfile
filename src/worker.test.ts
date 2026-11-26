@@ -422,7 +422,7 @@ test('shows the panel in the right sidebar on its command', async () => {
   const shown = String(await worker.command('taskfile.openPanel'))
   assert.equal(shown.includes('Оснастка'), true)
   assert.deepEqual(calls, [
-    ['plugin', 'open', 'local.taskfile-runner', '--panel', 'taskfile-runner', '--json']
+    ['plugin', 'open', 'dimti.taskfile-runner', '--panel', 'taskfile-runner', '--json']
   ])
   await worker.deactivate()
 })
@@ -437,7 +437,7 @@ test('shows the panel for the tasks view through its request', async () => {
   const result = await worker.request('taskfile.showPanel')
   assert.equal(result.shown, true)
   assert.deepEqual(calls, [
-    ['plugin', 'open', 'local.taskfile-runner', '--panel', 'taskfile-runner', '--json']
+    ['plugin', 'open', 'dimti.taskfile-runner', '--panel', 'taskfile-runner', '--json']
   ])
   // Without the CLI the view still works; it just gets told so.
   main.setCliRunnerForTests(async () => ({ ok: false, out: '' }))
@@ -495,7 +495,7 @@ test('opens the tasks view through the Orca CLI on its command', async () => {
     [
       'plugin',
       'open',
-      'local.taskfile-runner',
+      'dimti.taskfile-runner',
       '--editor',
       path.join(fixtures, 'Taskfile.yml'),
       '--json'
